@@ -6,116 +6,159 @@
 
 /* Part 3: Page replacement (LRU-based) */
 
+
 #include <stdio.h>
 #include <stdlib.h>
 
-#define PAGE_SIZE 256 /* Page size: 2^8 bytes = 256 bytes */
-#define TLB_SIZE 16 /* TLB: 16 entries */
-#define NUM_FRAMES 256 /* Physical memory: 256 frames */
-#define NUM_BYTES 256 /* Physical memory: 256 bytes per frame */
+#define PAGE_SIZE 256   /* Page size: 2^8 bytes = 256 bytes */
+#define TLB_SIZE 16     /* TLB: 16 entries */
+#define NUM_FRAMES 128  /* Trigger page replacement after memory fills up */
+#define NUM_BYTES 256   /* Physical memory: 256 bytes per frame */
 
 typedef struct pageTableEntry{
-    int frameNumber; /* Frame in physical memory */
-    int inMemory; /* Valid-Invalid Bit */
+    int frameNumber;    /* Frame in physical memory */
+    int inMemory;       /* Valid-Invalid Bit */
 }pageTableEntry;
 
-pageTableEntry pageTable[PAGE_SIZE]; /* Page Table */
-
 typedef struct tlbEntry{ 
-    int pageNumber; /* Page number */
-    int frameNumber; /* Frame number */
-    int occupied; /* Frame status: occupied or not */
+    int pageNumber;     
+    int frameNumber;    
+    int occupied;       /* Frame status: occupied or not */
 }tlbEntry;
 
-int tlbEntriesCount = 0;
-tlbEntry TLB[TLB_SIZE]; /* TLB */
-
+/* Global structures*/
+pageTableEntry pageTable[PAGE_SIZE];   
+tlbEntry TLB[TLB_SIZE]; 
 char physicalMemory[NUM_FRAMES][NUM_BYTES]; /* Physical Memory: 65,536 bytes */
-int memoryUsed[NUM_FRAMES]; /* Keeps track of used physical memory frames */
+int memoryUsed[NUM_FRAMES];                 /* Keeps track of used physical memory frames */
 
-/* Update TLB after reading from BACKING_STORE */
+/* LRU tracking*/
+int frameUsage[NUM_FRAMES]; 
+int timeCounter = 0;
+
+/* Stats */
+int tlbEntriesCount = 0;
+int page_faults = 0;
+int tlb_hits = 0;
+int total_addresses = 0;
+
+/* Update TLB */
 void updateTLB(int pageNum, int frame){
-    /* Add to TLB table */
+
     TLB[tlbEntriesCount].pageNumber = pageNum;
     TLB[tlbEntriesCount].frameNumber = frame;
     TLB[tlbEntriesCount].occupied = 1;
 
-    /* Increase table entry count */
-    if(tlbEntriesCount >= 16) tlbEntriesCount = 0;
-    else tlbEntriesCount++;
+    tlbEntriesCount = (tlbEntriesCount + 1) % TLB_SIZE;
 }
 
-/* Update Page table after reading from BACKING_STORE */
+/* Update Page table */
 void updatePageTable(int pageNumber, int frame){
     pageTable[pageNumber].frameNumber = frame;
     pageTable[pageNumber].inMemory = 1;
 }
 
-/* Read page from BACKING_STORE and store in physical memory */
-int insertIntoMemory(int pageNumber, FILE *backingStore){
-    int pageByte = pageNumber * PAGE_SIZE; /* Page byte value */
-
-    if(fseek(backingStore, pageByte, SEEK_SET) != 0){ /* Moves to page */
-        printf("Count not seek page in BACKING_STORE\n"); 
-        return 1; /* Returns error if seek fails */
-    }
-
-    size_t byteCount;
-    for(int i = 0; i < NUM_FRAMES; i++){
-        if(memoryUsed[i] == -1){
-            memoryUsed[i] =  1; /* Frame set to used */
-            byteCount = fread(physicalMemory[i], 1, NUM_BYTES, backingStore); /* Read bytes from backing store */
-            if(byteCount < NUM_BYTES){
-                printf("Error reading from BACKING_STORE\n");
-                return 1; /* Return error if read fails */
-            }else{
-                updateTLB(pageNumber, i);
-                updatePageTable(pageNumber, i);
-                return i;
-            }
-        }
-    }
-
-    return -1; /* No free frames found */
-}
-
 /* Check page table for frame number */
 int checkPageTable(int pageNumber){
     if(pageTable[pageNumber].inMemory){ /* Checks if loaded in memory */
-         /* Add to TLB table */
-        TLB[tlbEntriesCount].pageNumber = pageNumber;
-        TLB[tlbEntriesCount].frameNumber = pageTable[pageNumber].frameNumber;
-        TLB[tlbEntriesCount].occupied = 1;
-
-        /* Increase table entry count */
-        if(tlbEntriesCount >= 16) tlbEntriesCount = 0;
-        else tlbEntriesCount++;
-
-        return pageTable[pageNumber].frameNumber; /* Hit: return frame number */
+        return pageTable[pageNumber].frameNumber; /* Hit */
     }
 
-    return -1; /* Miss: must read from backing store */
+    return -1; /* Miss */
 }
 
 /* Check TLB for frame number */
 int checkTLB(int pageNumber){
-    /* Loop through TLB table for page number */
     for(int i = 0; i < TLB_SIZE; i++){
-        if(TLB[i].occupied && TLB[i].pageNumber == pageNumber)
+        if(TLB[i].occupied && TLB[i].pageNumber == pageNumber){
+            tlb_hits++;
             return TLB[i].frameNumber; /* TLB hit */
+        }
     }
 
-   return -1; /* TLB Miss: check page table */
+   return -1; /* TLB Miss */
+}
+
+/* Load page from BACKING_STORE into memory */
+int insertIntoMemory(int pageNumber, FILE *backingStore){
+    int frame = -1;
+
+    /* Check for free frame */
+    for(int i = 0; i < NUM_FRAMES; i++){
+        if(memoryUsed[i] == -1){
+            memoryUsed[i] =  1;         /* Frame set to used */
+            frame = i;
+            break;
+        }
+    }
+
+    /* If no free frame, replace using LRU */
+    if(frame == -1){
+        int lruFrame = 0;
+        for(int i = 1; i < NUM_FRAMES; i++){
+            if(frameUsage[i] < frameUsage[lruFrame]){
+                lruFrame = i;
+            }
+        }
+        frame = lruFrame;
+
+        /*Remove old page from page table*/
+
+        for(int i = 0; i < PAGE_SIZE; i++){
+            if(pageTable[i].inMemory && pageTable[i].frameNumber == frame){
+                pageTable[i].inMemory = 0;
+                break;
+            }
+        }
+
+        /*Remove from TLB*/
+
+        for(int i = 0; i < TLB_SIZE; i++){
+            if(TLB[i].occupied && TLB[i].frameNumber == frame){
+                TLB[i].occupied = 0;
+            }
+        }
+    }
+
+    int pageByte = pageNumber * PAGE_SIZE;
+
+    if(fseek(backingStore, pageByte, SEEK_SET) != 0){   /* Moves to page */
+        printf("Count not seek page in BACKING_STORE\n"); 
+        return -1; /* Returns error if seek fails */
+    }
+
+    size_t byteCount = fread(physicalMemory[frame], sizeof(char), PAGE_SIZE, backingStore);
+
+    if(byteCount < PAGE_SIZE){
+        printf("Error reading from BACKING_STORE\n");
+        return -1; /* Return error if read fails */
+    }
+
+    updatePageTable(pageNumber, frame);
+    page_faults++;
+
+    return frame;
 }
 
 /* Translate logical address to physical address */
 int translateLogicalAddr(int logicalAddr, int pageNum, int offset, FILE *backingStore,
                           FILE *out1, FILE *out2, FILE *out3){
     int frame = checkTLB(pageNum); /* Check TLB table */
+
     if(frame == -1) frame = checkPageTable(pageNum); /* Check page table */
-    if(frame == -1) frame = insertIntoMemory(pageNum, backingStore); /* Page fault: */
     
-    if(frame == -1){ /* No frame found */
+    if(frame == -1) {
+        frame = insertIntoMemory(pageNum, backingStore);
+
+        updateTLB(pageNum, frame);
+    }
+
+    /*Update LRU usage*/
+
+    timeCounter++;
+    frameUsage[frame] = timeCounter;
+
+    if(frame == -1){ 
         printf("No Frame found");
         return 1;
     }
@@ -127,10 +170,12 @@ int translateLogicalAddr(int logicalAddr, int pageNum, int offset, FILE *backing
 
     printf("Virtual address: %d Physical address: %d Value: %d\n", logicalAddr, physicalAddress, (signed char)physicalMemory[frame][offset]);
     
+    total_addresses++;
     return 0;
 } 
 
 int main(int argc, char *arg[]){
+
     /* Initialize page table */
     for(int i = 0; i < PAGE_SIZE; i++){
         pageTable[i].inMemory = 0;
@@ -145,7 +190,7 @@ int main(int argc, char *arg[]){
 
     /* Check command line argument: */
     if (argc != 2){
-        printf("Usage: ./main1 addresses.txt\n");
+        printf("Usage: ./main3 addresses.txt\n");
         return 1;
     }
 
@@ -194,6 +239,12 @@ int main(int argc, char *arg[]){
 
         translateLogicalAddr(logical_address, page, offset, backing_store, out1, out2, out3); /* Translate logical to physical addr */
     }
+
+    printf("\nNumber of Addresses = %d\n", total_addresses);
+    printf("Page Faults = %d\n", page_faults);
+    printf("Page Fault Rate = %.3f\n", (double)page_faults / total_addresses);
+    printf("TLB Hits = %d\n", tlb_hits);
+    printf("TLB Hit Rate = %.3f\n", (double)tlb_hits / total_addresses);
 
     /* Close files: */
     fclose(addresses);

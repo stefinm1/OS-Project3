@@ -170,7 +170,7 @@ int main(int argc, char *arg[]){
 
     /* Check command line argument: */
     if (argc != 2){
-        printf("Usage: ./main1 addresses.txt\n");
+        printf("Usage: ./main2 addresses.txt\n");
         return 1;
     }
 
