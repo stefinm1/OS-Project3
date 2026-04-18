@@ -6,7 +6,6 @@
 
 /* Part 1: No page replacement - FIFO-based TLB update */
 
-
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -16,11 +15,10 @@
 #define NUM_BYTES 256
 
 typedef struct pageTableEntry{
-    int inMemory; /* Memory status */
     int frameNumber; /* Frame in physical memory */
+    int inMemory; /* Valid-Invalid Bit */
 }pageTableEntry;
 
-int pageEntriesCount = 0;
 pageTableEntry pageTable[PAGE_SIZE]; /* Page Table */
 
 typedef struct tlbEntry{ 
@@ -33,34 +31,58 @@ int tlbEntriesCount = 0;
 tlbEntry TLB[TLB_SIZE]; /* TLB */
 
 char physicalMemory[NUM_FRAMES][NUM_BYTES]; /* Physical Memory: 65,536 bytes */
+int memoryUsed[NUM_FRAMES]; /* Keeps track of used physical memory frames */
 
-void addTLBEntry(int pageNumber){
+/* Update TLB after reading from BACKING_STORE */
+void updateTLB(int pageNum, int frame){
+    /* Add to TLB table */
+    TLB[tlbEntriesCount].pageNumber = pageNum;
+    TLB[tlbEntriesCount].frameNumber = frame;
+    TLB[tlbEntriesCount].occupied = 1;
 
-    tlbEntriesCount++;
+    /* Increase table entry count */
+    if(tlbEntriesCount >= 16) tlbEntriesCount = 0;
+    else tlbEntriesCount++;
 }
 
-void addPageEntry(int pageNumber){
-    pageEntriesCount++;
+/* Update Page table after reading from BACKING_STORE */
+void updatePageTable(int pageNumber, int frame){
+    pageTable[pageNumber].frameNumber = frame;
+    pageTable[pageNumber].inMemory = 1;
 }
 
-int insertIntoMemory(int pageNumber){
-    /*
-    Ex: if logical address with page number 15 = page fault, read in page 15 from
-        Backing_store and store it in a page frame in physical memory (page table & TLB updated)
+/* Read page from BACKING_STORE and store in physical memory */
+int insertIntoMemory(int pageNumber, FILE *backingStore){
+    int pageByte = pageNumber * PAGE_SIZE; /* Page byte value */
 
-    BACKING_STORE:
-        - treat as random-access file to randomly seek to certain positions for r
-        - fopen(), fread(), fseek(), fclose() 
+    if(fseek(backingStore, pageByte, SEEK_SET) != 0){ /* Moves to page */
+        printf("Count not seek page in BACKING_STORE\n"); 
+        return 1; /* Returns error if seek fails */
+    }
 
-    1. read in 256-byte page (page number) from Backing_store 
-    2. Store in an available page frame in physical memory
-    3. Update TLB and page table
-    */
+    size_t byteCount;
+    for(int i = 0; i < NUM_FRAMES; i++){
+        if(memoryUsed[i] == -1){
+            memoryUsed[i] =  1; /* Frame set to used */
+            byteCount = fread(physicalMemory[i], 1, NUM_BYTES, backingStore); /* Read bytes from backing store */
+            if(byteCount < NUM_BYTES){
+                printf("Error reading from BACKING_STORE\n");
+                return 1; /* Return error if read fails */
+            }else{
+                updateTLB(pageNumber, i);
+                updatePageTable(pageNumber, i);
+                return i;
+            }
+        }
+    }
+
+    return -1; /* No free frames found */
 }
 
+/* Check page table for frame number */
 int checkPageTable(int pageNumber){
     if(pageTable[pageNumber].inMemory){ /* Checks if loaded in memory */
-        /* Add to TLB table */
+         /* Add to TLB table */
         TLB[tlbEntriesCount].pageNumber = pageNumber;
         TLB[tlbEntriesCount].frameNumber = pageTable[pageNumber].frameNumber;
         TLB[tlbEntriesCount].occupied = 1;
@@ -72,9 +94,10 @@ int checkPageTable(int pageNumber){
         return pageTable[pageNumber].frameNumber; /* Hit: return frame number */
     }
 
-    return -1; /* Return -1 if page fault */
+    return -1; /* Miss: must read from backing store */
 }
 
+/* Check TLB for frame number */
 int checkTLB(int pageNumber){
     /* Loop through TLB table for page number */
     for(int i = 0; i < TLB_SIZE; i++){
@@ -86,22 +109,25 @@ int checkTLB(int pageNumber){
 }
 
 /* Translate logical address to physical address */
-void translateLogicalAddr(int logicalAddr, int pageNum, int offset){
+void translateLogicalAddr(int logicalAddr, int pageNum, int offset, FILE *backingStore){
     int frame = checkTLB(pageNum); /* Check TLB table */
     if(frame == -1) frame = checkPageTable(pageNum); /* Check page table */
-    if(frame == -1) frame = insertIntoMemory(pageNum); /* Page fault: */
+    if(frame == -1) frame = insertIntoMemory(pageNum, backingStore); /* Page fault: */
     int physicalAddress = (frame << 8) | offset; /* Calculate physical address */
 } 
 
 int main(int argc, char *arg[]){
     /* Initialize page table */
-    for(int i = 0; i < TLB_SIZE; i++){
+    for(int i = 0; i < PAGE_SIZE; i++){
         pageTable[i].inMemory = 0;
         pageTable[i].frameNumber = -1;
     }
 
     /* Initialize TLB table */
     for(int i = 0; i < TLB_SIZE; i++) TLB[i].occupied = 0;
+
+    /* Initialize memoryUsed array */
+    for(int i = 0; i < NUM_FRAMES; i++) memoryUsed[i] = -1;
 
     /* Check command line argument: */
     if (argc != 2){
@@ -133,7 +159,7 @@ int main(int argc, char *arg[]){
 
         printf("logical=%d page=%d offset=%d\n", logical_address, page, offset);
 
-        translateLogicalAddr(logical_address, page, offset); /* Translate logical to physical addr */
+        translateLogicalAddr(logical_address, page, offset, backing_store); /* Translate logical to physical addr */
     }
 
     /* Close files: */
@@ -142,9 +168,3 @@ int main(int argc, char *arg[]){
 
     return 0;
 }
-
-
-
-
-
-
