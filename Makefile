@@ -6,4 +6,6 @@ all:
 
 clean:
 	rm -f main1 main2 main3 *.o
-
+	rm out1.txt
+	rm out2.txt
+	rm out3.txt
