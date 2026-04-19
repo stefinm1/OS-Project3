@@ -6,7 +6,6 @@
 
 /* Part 2: Page replacement (FIFO-based) */
 
-
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -29,7 +28,7 @@ typedef struct tlbEntry{
 /* Global structures*/
 pageTableEntry pageTable[PAGE_SIZE];   
 tlbEntry TLB[TLB_SIZE]; 
-char physicalMemory[NUM_FRAMES][NUM_BYTES]; /* Physical Memory: 65,536 bytes */
+char physicalMemory[NUM_FRAMES][NUM_BYTES]; /* Physical Memory: 128*256 bytes */
 int memoryUsed[NUM_FRAMES];                 /* Keeps track of used physical memory frames */
 
 int tlbEntriesCount = 0;
@@ -120,9 +119,7 @@ int insertIntoMemory(int pageNumber, FILE *backingStore){
     updatePageTable(pageNumber, frame);
     page_faults++;
 
-    return frame;
-
-    
+    return frame; 
 }
 
 /* Translate logical address to physical address */
@@ -134,7 +131,6 @@ int translateLogicalAddr(int logicalAddr, int pageNum, int offset, FILE *backing
     
     if(frame == -1) {
         frame = insertIntoMemory(pageNum, backingStore);
-
         updateTLB(pageNum, frame);
     }
 
@@ -148,8 +144,6 @@ int translateLogicalAddr(int logicalAddr, int pageNum, int offset, FILE *backing
     fprintf(out2, "%d\n", physicalAddress); /* out2: corresponding physical address */
     fprintf(out3, "%d\n", (signed char)physicalMemory[frame][offset]); /* out3: signed byte value in physical memory at physical address */
 
-    printf("Virtual address: %d Physical address: %d Value: %d\n", logicalAddr, physicalAddress, (signed char)physicalMemory[frame][offset]);
-    
     total_addresses++;
     return 0;
 } 
@@ -188,21 +182,21 @@ int main(int argc, char *arg[]){
         return 1;
     }
 
-    /* Output file: logical address being translated */
+    /* Output file 1: logical address being translated */
     FILE *out1 = fopen("out1.txt", "w");
     if(out1 == NULL){
         printf("Error creating out1 \n");
         return 1;
     }
 
-    /* Output file: corresponding physical address */
+    /* Output file 2: corresponding physical address */
     FILE *out2 = fopen("out2.txt", "w");
     if(out2 == NULL){
         printf("Error creating out2 \n");
         return 1;
     }
 
-    /* Output file: signed byte value stored in physical memory at translated physical address */
+    /* Output file 3: signed byte value stored in physical memory at translated physical address */
     FILE *out3 = fopen("out3.txt", "w");
     if(out3 == NULL){
         printf("Error creating out3 \n");
@@ -220,10 +214,10 @@ int main(int argc, char *arg[]){
         translateLogicalAddr(logical_address, page, offset, backing_store, out1, out2, out3); /* Translate logical to physical addr */
     }
 
-    printf("\nNumber of Addresses = %d\n", total_addresses);
-    printf("Page Faults = %d\n", page_faults);
+    printf("\n(FIFO-Based Page Replacement)\n");
+    printf("Page Faults = %d / %d\n", page_faults, total_addresses);
     printf("Page Fault Rate = %.3f\n", (double)page_faults / total_addresses);
-    printf("TLB Hits = %d\n", tlb_hits);
+    printf("TLB Hits = %d / %d\n", tlb_hits, total_addresses);
     printf("TLB Hit Rate = %.3f\n", (double)tlb_hits / total_addresses);
 
     /* Close files: */
